@@ -22,7 +22,9 @@ setup(
         "SQLAlchemy>=1.4.0",
         "psycopg2-binary", # Assuming a PostgreSQL database
         "matplotlib>=3.5.0",
-    ],
+        "plotly>=6.0.0",
+        "nbformat>=5.0.0"
+        ],
     classifiers=[
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",

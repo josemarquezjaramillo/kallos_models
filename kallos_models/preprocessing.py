@@ -10,6 +10,23 @@ from sklearn.preprocessing import FunctionTransformer, MinMaxScaler, RobustScale
 # Set up a basic logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+def calculate_log_returns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculates the log returns for each column in the DataFrame.
+
+    Log return is calculated as log(p_t / p_{t-1}). The first row's NaN
+    values are filled with 0. This function assumes the input DataFrame
+    is sorted by time for a single asset.
+
+    Args:
+        df (pd.DataFrame): Input data series, sorted by time.
+
+    Returns:
+        pd.DataFrame: The transformed data with log returns.
+    """
+    log_returns = np.log(df / df.shift(1))
+    return log_returns.fillna(0)
+
 
 def log_modified_z_score(series: pd.Series) -> pd.Series:
     """Applies a log-modified Z-score transformation suitable for heavy-tailed distributions.

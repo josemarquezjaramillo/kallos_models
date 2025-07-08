@@ -1,0 +1,10 @@
+{
+    "asset_id": "bitcoin",
+    "model_name": "gru",
+    "tune_end_date": "2023-01-01",
+    "train_end_date": "2023-01-01",
+    "test_start_date": "2023-01-01",
+    "test_end_date": "2023-07-01",
+    "n_trials": 10,
+    "output_path": "./kallos_run_output"
+}

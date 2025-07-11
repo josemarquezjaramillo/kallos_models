@@ -1,3 +1,31 @@
+"""
+Model Evaluation Module
+======================
+
+This module provides functionality for evaluating trained time series forecasting models
+on hold-out test data. It handles loading saved models and scalers, generating forecasts,
+calculating performance metrics, and creating visualization charts.
+
+Example:
+    from kallos_models import evaluation
+    
+    # Evaluate a trained model on hold-out test data
+    evaluation.run_evaluation(
+        model_path="./trained_models/gru_BTC.pt",
+        scaler_path="./trained_models/gru_BTC_scaler.pkl",
+        asset_id="BTC",
+        test_start_date="2023-01-01",
+        test_end_date="2023-03-31",
+        db_url="postgresql://user:pass@localhost:5432/crypto_db",
+        target_col="close",
+        feature_groups={
+            "volume_features": ["volume"],
+            "bounded_features": ["rsi"]
+        },
+        output_path="./evaluation_results"
+    )
+"""
+
 import json
 import logging
 import os
@@ -17,14 +45,40 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 def generate_evaluation_report(true_series: TimeSeries, forecast_series: TimeSeries) -> Dict[str, float]:
-    """Calculates a dictionary of key performance indicators.
-
-    Args:
-        true_series (TimeSeries): The ground truth time series.
-        forecast_series (TimeSeries): The forecasted time series.
-
+    """
+    Calculate performance metrics comparing forecasted values against actual values.
+    
+    Parameters:
+        true_series (TimeSeries): The ground truth time series with actual values
+        forecast_series (TimeSeries): The forecasted time series from the model
+    
     Returns:
-        Dict[str, float]: A dictionary containing RMSE, MAE, and MAPE scores.
+        Dict[str, float]: A dictionary containing performance metrics:
+            - rmse: Root Mean Squared Error
+            - mae: Mean Absolute Error
+            - mape: Mean Absolute Percentage Error
+    
+    Notes:
+        - Lower values indicate better performance for all metrics
+        - MAPE is expressed as a percentage (e.g., 5.2 means 5.2%)
+        - The function logs the metrics for immediate feedback
+    
+    Example:
+        >>> from darts import TimeSeries
+        >>> import numpy as np
+        >>> 
+        >>> # Create sample true and forecasted series
+        >>> times = pd.date_range('2023-01-01', periods=10, freq='D')
+        >>> true_values = np.array([100, 101, 103, 106, 110, 115, 121, 127, 135, 142])
+        >>> forecast_values = np.array([99, 103, 105, 108, 112, 118, 123, 130, 136, 145])
+        >>> 
+        >>> true = TimeSeries.from_times_and_values(times, true_values)
+        >>> forecast = TimeSeries.from_times_and_values(times, forecast_values)
+        >>> 
+        >>> # Calculate evaluation metrics
+        >>> metrics = generate_evaluation_report(true, forecast)
+        >>> print(metrics)
+        {'rmse': 2.0, 'mae': 1.8, 'mape': 1.52}
     """
     report = {
         "rmse": rmse(true_series, forecast_series),
@@ -41,13 +95,46 @@ def plot_forecast(
     title: str,
     output_path: str
 ) -> None:
-    """Plots the true vs. forecasted series and saves the chart.
-
-    Args:
-        true_series (TimeSeries): The ground truth time series.
-        forecast_series (TimeSeries): The forecasted time series.
-        title (str): The title for the chart.
-        output_path (str): The file path to save the plot image.
+    """
+    Create and save a visualization of the forecasted vs. actual values.
+    
+    Parameters:
+        true_series (TimeSeries): The ground truth time series with actual values
+        forecast_series (TimeSeries): The forecasted time series from the model
+        title (str): The title for the plot
+        output_path (str): The file path where the plot image will be saved
+    
+    Returns:
+        None
+    
+    Notes:
+        - Uses matplotlib for creating the visualization
+        - The plot includes both actual and forecasted lines with a legend
+        - The x-axis represents the datetime index
+        - The y-axis represents the target variable values
+        - The saved image is in PNG format
+    
+    Example:
+        >>> from darts import TimeSeries
+        >>> import pandas as pd
+        >>> import numpy as np
+        >>> 
+        >>> # Create sample data
+        >>> dates = pd.date_range('2023-01-01', '2023-01-31', freq='D')
+        >>> actual = np.sin(np.linspace(0, 4*np.pi, len(dates))) * 10 + 50
+        >>> forecast = actual + np.random.normal(0, 1, len(dates))
+        >>> 
+        >>> # Convert to TimeSeries
+        >>> actual_ts = TimeSeries.from_times_and_values(dates, actual)
+        >>> forecast_ts = TimeSeries.from_times_and_values(dates, forecast)
+        >>> 
+        >>> # Create and save plot
+        >>> plot_forecast(
+        ...     actual_ts, 
+        ...     forecast_ts, 
+        ...     "Bitcoin Price Forecast - January 2023",
+        ...     "./bitcoin_forecast_jan2023.png"
+        ... )
     """
     plt.figure(figsize=(12, 6))
     true_series.plot(label="Actual")
@@ -73,18 +160,58 @@ def run_evaluation(
     feature_groups: Dict[str, List[str]],
     output_path: str
 ) -> None:
-    """Orchestrates the model evaluation process on a hold-out test set.
-
-    Args:
-        model_path (str): Path to the saved Darts model file.
-        scaler_path (str): Path to the saved scikit-learn scaler file.
-        asset_id (str): The asset identifier.
-        test_start_date (str): The start date of the test period (YYYY-MM-DD).
-        test_end_date (str): The end date of the test period (YYYY-MM-DD).
-        db_url (str): The database connection URL.
-        target_col (str): The name of the target column.
-        feature_groups (Dict[str, List[str]]): The feature group dictionary.
-        output_path (str): The directory to save evaluation artifacts.
+    """
+    Evaluate a trained model on hold-out test data and save performance metrics and charts.
+    
+    This function orchestrates the complete evaluation workflow:
+    1. Load the saved model and scaler
+    2. Fetch test data from the database
+    3. Preprocess the test data using the saved scaler
+    4. Generate forecasts using the model
+    5. Calculate performance metrics
+    6. Create and save visualization charts
+    
+    Parameters:
+        model_path (str): Path to the saved Darts model file (.pt)
+        scaler_path (str): Path to the saved scikit-learn scaler file (.pkl)
+        asset_id (str): The asset identifier (e.g., "BTC", "ETH")
+        test_start_date (str): Start date of the test period in ISO format (YYYY-MM-DD)
+        test_end_date (str): End date of the test period in ISO format (YYYY-MM-DD)
+        db_url (str): The SQLAlchemy database URL for data loading
+        target_col (str): The name of the target column to predict
+        feature_groups (Dict[str, List[str]]): Dictionary mapping feature group names to lists of column names
+        output_path (str): Directory where evaluation results will be saved
+    
+    Returns:
+        None
+    
+    Raises:
+        FileNotFoundError: If the model or scaler files cannot be found
+        ValueError: If the date range is invalid
+        
+    Notes:
+        - The function creates the output directory if it doesn't exist
+        - Two files are saved in the output directory:
+          * {asset_id}_evaluation_metrics.json: JSON file with performance metrics
+          * {asset_id}_evaluation_plot.png: Visualization of actual vs. forecasted values
+        - The model requires historical data prior to test_start_date equal to its input_chunk_length
+    
+    Example:
+        >>> run_evaluation(
+        ...     model_path="./models/gru_BTC.pt",
+        ...     scaler_path="./models/gru_BTC_scaler.pkl",
+        ...     asset_id="BTC",
+        ...     test_start_date="2023-01-01",
+        ...     test_end_date="2023-03-31",
+        ...     db_url="postgresql://user:pass@localhost:5432/crypto_db",
+        ...     target_col="close",
+        ...     feature_groups={
+        ...         "volume_features": ["volume", "taker_buy_volume"],
+        ...         "bounded_features": ["rsi", "mfi"],
+        ...         "unbounded_features": ["macd_diff"]
+        ...     },
+        ...     output_path="./evaluation_results"
+        ... )
     """
     logging.info(f"Starting evaluation for model at '{model_path}'")
     os.makedirs(output_path, exist_ok=True)

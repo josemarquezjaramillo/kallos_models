@@ -1,3 +1,28 @@
+"""
+Kallos Models Command Line Interface
+===================================
+
+This module provides a command-line interface for the entire kallos_models workflow.
+It includes commands for tuning hyperparameters, training final models, and evaluating
+trained models on hold-out test data.
+
+Usage:
+    # Tune hyperparameters
+    python -m kallos_models tune --model-name gru --asset-id BTC --end-date 2023-01-01 \
+        --db-url "postgresql://user:pass@host/db" --n-trials 100
+
+    # Train final model with optimal hyperparameters
+    python -m kallos_models train --model-name gru --asset-id BTC --end-date 2023-01-01 \
+        --db-url "postgresql://user:pass@host/db" --params-file gru_BTC_best_params.json \
+        --output-path ./trained_models
+
+    # Evaluate trained model on hold-out test data
+    python -m kallos_models evaluate --model-name gru --asset-id BTC \
+        --model-path ./trained_models/gru_BTC.pt --scaler-path ./trained_models/gru_BTC_scaler.pkl \
+        --test-start-date 2023-02-01 --test-end-date 2023-04-30 \
+        --db-url "postgresql://user:pass@host/db" --output-path ./evaluation_results
+"""
+
 import argparse
 import json
 import logging
@@ -19,7 +44,33 @@ FEATURE_GROUPS = {
 }
 
 def run_tune(args):
-    """Runs the hyperparameter tuning process."""
+    """
+    Run the hyperparameter tuning process.
+    
+    This function parses command-line arguments and initiates the tuning process
+    for a specified model and cryptocurrency asset.
+    
+    Parameters:
+        args (Namespace): Command-line arguments parsed by argparse.
+            Required attributes:
+            - model_name (str): The type of model to tune
+            - asset_id (str): The cryptocurrency asset identifier
+            - end_date (str): The end date for training data
+            - db_url (str): The database connection URL
+            - n_trials (int): Number of hyperparameter optimization trials
+    
+    Returns:
+        None
+    
+    Notes:
+        - Saves the best hyperparameters to a JSON file named {model_name}_{asset_id}_best_params.json
+        - Uses hardcoded feature groups and target column defined at module level
+    
+    Example:
+        # This function is called by the main() function when the 'tune' subcommand is used:
+        # python -m kallos_models tune --model-name gru --asset-id BTC --end-date 2023-01-01 \
+        #     --db-url "postgresql://user:pass@host/db" --n-trials 100
+    """
     logging.info(f"Starting tuning for model '{args.model_name}' on asset '{args.asset_id}'...")
     best_params = tuner.run_tuning(
         asset_id=args.asset_id,
@@ -38,7 +89,40 @@ def run_tune(args):
     logging.info(f"Best parameters saved to {params_filename}")
 
 def run_train(args):
-    """Runs the final model training process."""
+    """
+    Run the final model training process.
+    
+    This function parses command-line arguments and trains a final model using
+    the optimal hyperparameters found during tuning.
+    
+    Parameters:
+        args (Namespace): Command-line arguments parsed by argparse.
+            Required attributes:
+            - model_name (str): The type of model to train
+            - asset_id (str): The cryptocurrency asset identifier
+            - end_date (str): The end date for training data
+            - db_url (str): The database connection URL
+            - params_file (str): Path to JSON file with optimal hyperparameters
+            - output_path (str): Directory to save trained model and scaler
+    
+    Returns:
+        None
+    
+    Raises:
+        FileNotFoundError: If the parameters file cannot be found
+    
+    Notes:
+        - Uses hardcoded feature groups and target column defined at module level
+        - Saves two files to the output directory:
+          * {model_name}_{asset_id}.pt: The trained Darts model
+          * {model_name}_{asset_id}_scaler.pkl: The fitted scikit-learn scaler
+    
+    Example:
+        # This function is called by the main() function when the 'train' subcommand is used:
+        # python -m kallos_models train --model-name gru --asset-id BTC --end-date 2023-01-01 \
+        #     --db-url "postgresql://user:pass@host/db" --params-file gru_BTC_best_params.json \
+        #     --output-path ./trained_models
+    """
     logging.info(f"Starting training for model '{args.model_name}' on asset '{args.asset_id}'...")
     
     # Load optimal hyperparameters from file
@@ -62,7 +146,39 @@ def run_train(args):
     logging.info("Training complete.")
 
 def run_evaluate(args):
-    """Runs the model evaluation process on a hold-out test set."""
+    """
+    Run the model evaluation process on a hold-out test set.
+    
+    This function parses command-line arguments and evaluates a trained model's
+    performance on an unseen test dataset.
+    
+    Parameters:
+        args (Namespace): Command-line arguments parsed by argparse.
+            Required attributes:
+            - model_path (str): Path to the saved model file (.pt)
+            - scaler_path (str): Path to the saved scaler file (.pkl)
+            - asset_id (str): The cryptocurrency asset identifier
+            - test_start_date (str): Start date for the test period
+            - test_end_date (str): End date for the test period
+            - db_url (str): The database connection URL
+            - output_path (str): Directory to save evaluation results
+    
+    Returns:
+        None
+    
+    Notes:
+        - Uses hardcoded feature groups and target column defined at module level
+        - Saves two files to the output directory:
+          * {asset_id}_evaluation_metrics.json: Performance metrics
+          * {asset_id}_evaluation_plot.png: Chart comparing forecasts to actual values
+    
+    Example:
+        # This function is called by the main() function when the 'evaluate' subcommand is used:
+        # python -m kallos_models evaluate --model-name gru --asset-id BTC \
+        #     --model-path ./trained_models/gru_BTC.pt --scaler-path ./trained_models/gru_BTC_scaler.pkl \
+        #     --test-start-date 2023-02-01 --test-end-date 2023-04-30 \
+        #     --db-url "postgresql://user:pass@host/db" --output-path ./evaluation_results
+    """
     logging.info(f"Starting evaluation for asset '{args.asset_id}'...")
     evaluation.run_evaluation(
         model_path=args.model_path,
@@ -77,7 +193,37 @@ def run_evaluate(args):
     )
 
 def main():
-    """Main function to parse arguments and run selected mode."""
+    """
+    Main function to parse command-line arguments and execute the selected mode.
+    
+    This function defines the command-line interface for the kallos_models package,
+    with three primary subcommands: 'tune', 'train', and 'evaluate'. Each subcommand
+    has specific required and optional arguments.
+    
+    Returns:
+        None
+    
+    Notes:
+        - The function uses argparse to define the CLI structure and required arguments
+        - Each subcommand is mapped to a specific function (run_tune, run_train, or run_evaluate)
+    
+    Examples:
+        # Tune hyperparameters:
+        python -m kallos_models tune --model-name gru --asset-id BTC --end-date 2023-01-01 \
+            --db-url "postgresql://user:pass@host/db" --n-trials 100
+            
+        # Train final model:
+        python -m kallos_models train --model-name gru --asset-id BTC --end-date 2023-01-01 \
+            --db-url "postgresql://user:pass@host/db" --params-file gru_BTC_best_params.json \
+            --output-path ./trained_models
+            
+        # Evaluate trained model:
+        python -m kallos_models evaluate --model-name gru --asset-id BTC \
+            --model-path ./trained_models/gru_BTC.pt \
+            --scaler-path ./trained_models/gru_BTC_scaler.pkl \
+            --test-start-date 2023-02-01 --test-end-date 2023-04-30 \
+            --db-url "postgresql://user:pass@host/db" --output-path ./evaluation_results
+    """
     parser = argparse.ArgumentParser(description="Kallos Models CLI for tuning and training.")
     subparsers = parser.add_subparsers(dest="mode", required=True, help="Select mode: 'tune', 'train', or 'evaluate'")
 

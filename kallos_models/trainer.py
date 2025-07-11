@@ -1,3 +1,38 @@
+"""
+Model Training Module
+====================
+
+This module provides functionality for training the final model using the optimal
+hyperparameters found during the tuning phase. It handles loading the complete dataset,
+preprocessing features, training the model, and saving both the model and scaler for
+later use in inference.
+
+Example:
+    from kallos_models import trainer
+    
+    # Train a final GRU model with optimal hyperparameters
+    trainer.train_and_save_model(
+        asset_id="BTC",
+        end_date="2023-01-01",
+        db_url="postgresql://user:pass@localhost:5432/crypto_db",
+        model_name="gru",
+        target_col="close",
+        feature_groups={
+            "volume_features": ["volume"],
+            "bounded_features": ["rsi"]
+        },
+        optimal_hparams={
+            "hidden_dim": 128,
+            "n_rnn_layers": 2,
+            "dropout": 0.2,
+            "input_chunk_length": 60,
+            "batch_size": 64,
+            "optimizer_kwargs": {"lr": 0.001}
+        },
+        output_path="./models"
+    )
+"""
+
 import logging
 import os
 import pickle
@@ -24,20 +59,60 @@ def train_and_save_model(
     optimal_hparams: Dict,
     output_path: str
 ) -> Tuple[ForecastingModel, ColumnTransformer]:
-    """Trains a final model on all data and saves the model and scaler.
-
-    Args:
-        asset_id (str): The asset identifier.
-        end_date (str): The final date for the data.
-        db_url (str): The database connection URL.
-        model_name (str): The name of the model to train.
-        target_col (str): The name of the target column.
-        feature_groups (Dict[str, List[str]]): The feature group dictionary.
-        optimal_hparams (Dict): The dictionary of best hyperparameters.
-        output_path (str): The directory path to save the artifacts.
-
+    """
+    Train a final model on all available data and save both model and scaler to disk.
+    
+    This function represents the final step in the model development pipeline. It:
+    1. Loads all available data up to the specified end date
+    2. Creates and fits a feature transformer on the entire dataset
+    3. Transforms features using the fitted transformer
+    4. Instantiates a model with the optimal hyperparameters
+    5. Trains the model on the full dataset
+    6. Saves both the trained model and fitted scaler to disk for later inference
+    
+    Parameters:
+        asset_id (str): The asset identifier (e.g., "BTC", "ETH")
+        end_date (str): The end date for the data in ISO format (YYYY-MM-DD)
+        db_url (str): The SQLAlchemy database URL for data loading
+        model_name (str): The type of model to create (e.g., "gru", "lstm", "transformer")
+        target_col (str): The name of the target column in the dataset
+        feature_groups (Dict[str, List[str]]): Dictionary mapping feature group names to lists of column names
+        optimal_hparams (Dict): Dictionary containing the optimal hyperparameters found during tuning
+        output_path (str): Directory path where the model and scaler will be saved
+    
     Returns:
-        Tuple[ForecastingModel, ColumnTransformer]: The trained model and fitted scaler.
+        Tuple[ForecastingModel, ColumnTransformer]: The trained model and fitted scaler
+    
+    Raises:
+        ValueError: If the specified output directory cannot be created
+        IOError: If the model or scaler cannot be saved to disk
+    
+    Notes:
+        - Unlike the tuning phase, the scaler is fitted on the entire dataset
+        - Both the model (.pt file) and scaler (.pkl file) must be saved together
+          as they need to be used in tandem for inference
+    
+    Example:
+        model, scaler = train_and_save_model(
+            asset_id="BTC",
+            end_date="2023-01-01",
+            db_url="postgresql://user:pass@localhost:5432/crypto_db",
+            model_name="gru",
+            target_col="close",
+            feature_groups={
+                "volume_features": ["volume", "taker_buy_base_asset_volume"],
+                "bounded_features": ["rsi", "mfi"]
+            },
+            optimal_hparams={
+                "hidden_dim": 128,
+                "n_rnn_layers": 2,
+                "dropout": 0.2,
+                "batch_size": 64,
+                "input_chunk_length": 60,
+                "optimizer_kwargs": {"lr": 0.001}
+            },
+            output_path="./trained_models"
+        )
     """
     logging.info(f"Starting final training for {model_name} on asset {asset_id}.")
     

@@ -1,3 +1,41 @@
+"""
+Data Access and Preparation Module
+=================================
+
+This module handles data loading from databases and preparation for time-series modeling.
+It provides functions for loading cryptocurrency data, generating robust walk-forward
+validation splits, and preprocessing data into Darts TimeSeries objects.
+
+The module implements:
+1. Database querying functionality to load historical cryptocurrency data
+2. Walk-forward cross-validation generation for time-series model evaluation
+3. Feature transformation and normalization for Darts models
+4. Conversion of pandas DataFrames to Darts TimeSeries objects
+
+Example:
+    from kallos_models import datasets
+    
+    # Load data from database
+    db_config = {
+        'postgres_user': 'user',
+        'postgres_password': 'pass',
+        'postgres_host': 'localhost',
+        'postgres_port': 5432,
+        'postgres_db': 'crypto_db'
+    }
+    
+    # Load historical data for Bitcoin
+    btc_data = datasets.load_features_from_db('BTC', '2023-01-01', db_config)
+    
+    # Generate walk-forward splits for cross-validation
+    for train_df, val_df in datasets.get_walk_forward_splits(btc_data, 
+                                                            train_years=2,
+                                                            val_months=3,
+                                                            step_months=3):
+        print(f"Train: {train_df.index.min()} to {train_df.index.max()}")
+        print(f"Val: {val_df.index.min()} to {val_df.index.max()}")
+"""
+
 import logging
 from typing import Dict, Generator, List, Tuple
 import pandas as pd
@@ -14,16 +52,53 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 def load_features_from_db(asset_id: str, end_date: str, db_kwargs: dict, start_date='2018-06-01') -> pd.DataFrame:
-    """Loads all features for a given asset from the database up to a specific end date.
-
-    Args:
-        asset_id (str): The identifier for the cryptocurrency (e.g., 'BTC').
-        end_date (str): The final date for the data ('YYYY-MM-DD').
-        db_kwargs (dict): Keyword arguments for creating the database URL.
-            Requires keys: 'postgres_user', 'postgres_password', 'postgres_host', 'postgres_port', 'postgres_db'.
-
+    """
+    Load cryptocurrency features from database for a specified asset and time period.
+    
+    This function connects to a SQL database and executes a query to retrieve all relevant
+    technical indicators and price data for the specified cryptocurrency. It processes
+    the returned data to ensure proper datetime indexing and frequency.
+    
+    Parameters:
+        asset_id (str): The identifier for the cryptocurrency (e.g., 'BTC', 'ETH')
+        end_date (str): The final date for the data in ISO format ('YYYY-MM-DD')
+        db_kwargs (dict): Database connection parameters containing:
+            - postgres_user (str): Database username
+            - postgres_password (str): Database password
+            - postgres_host (str): Database host address
+            - postgres_port (int): Database port number
+            - postgres_db (str): Database name
+            - drivername (str, optional): SQLAlchemy driver name, defaults to 'postgresql+psycopg2'
+        start_date (str, optional): The start date for the data in ISO format ('YYYY-MM-DD').
+            Defaults to '2018-06-01'.
+    
     Returns:
-        pd.DataFrame: A DataFrame with a datetime index and feature columns.
+        pd.DataFrame: A DataFrame with datetime index and feature columns
+    
+    Raises:
+        ValueError: If required database configuration keys are missing
+        SQLAlchemyError: If a database connection error occurs
+    
+    Notes:
+        - The returned DataFrame has a timezone-naive DatetimeIndex with daily frequency
+        - Missing values in the time series are forward-filled
+        - The query fetches a wide range of features including:
+          * Price data (open, high, low, close)
+          * Volume indicators
+          * Technical indicators (RSI, MACD, Bollinger Bands, etc.)
+          * Rate-of-change metrics
+        
+    Example:
+        >>> db_config = {
+        ...     'postgres_user': 'crypto_user',
+        ...     'postgres_password': 'password123',
+        ...     'postgres_host': 'localhost',
+        ...     'postgres_port': 5432,
+        ...     'postgres_db': 'crypto_database'
+        ... }
+        >>> btc_df = load_features_from_db('BTC', '2023-01-01', db_config)
+        >>> print(f"Loaded {len(btc_df)} rows of data")
+        >>> print(f"Date range: {btc_df.index.min()} to {btc_df.index.max()}")
     """
     logging.info(f"Loading features for asset '{asset_id}' up to {end_date}...")
     query = f"""
@@ -118,15 +193,37 @@ def load_features_from_db(asset_id: str, end_date: str, db_kwargs: dict, start_d
 
 def calculate_dynamic_wf_kwargs(full_df: pd.DataFrame, target_folds: int = 5, initial_train_ratio: float = 0.8) -> Dict[str, int]:
     """
-    Calculates dynamic walk-forward parameters based on the dataset's length.
-
-    Args:
-        full_df (pd.DataFrame): The entire historical DataFrame.
-        target_folds (int): The desired number of walk-forward folds.
-        initial_train_ratio (float): The proportion of the data to use for the initial training set.
-
+    Calculate dynamic walk-forward parameters based on the dataset length.
+    
+    This function automatically determines appropriate time windows for walk-forward
+    validation based on the size of the dataset, ensuring a reasonable number of
+    validation folds while maintaining adequate training data.
+    
+    Parameters:
+        full_df (pd.DataFrame): The entire historical DataFrame with a DatetimeIndex
+        target_folds (int, optional): The desired number of walk-forward validation folds.
+            Defaults to 5.
+        initial_train_ratio (float, optional): The proportion of data to use for the
+            initial training set. Defaults to 0.8 (80%).
+    
     Returns:
-        Dict[str, int]: A dictionary with calculated 'train_years', 'val_months', and 'step_months'.
+        Dict[str, int]: A dictionary with calculated parameters:
+            - 'train_years': Number of years for the initial training period
+            - 'val_months': Number of months for each validation period
+            - 'step_months': Number of months to advance between folds
+    
+    Notes:
+        - Ensures at least 1 year of training data regardless of dataset size
+        - Makes validation windows at least 3 months long for statistical significance
+        - The step size equals the validation window size, creating non-overlapping validation sets
+    
+    Example:
+        >>> import pandas as pd
+        >>> dates = pd.date_range('2018-01-01', '2023-01-01', freq='D')
+        >>> df = pd.DataFrame(index=dates)
+        >>> params = calculate_dynamic_wf_kwargs(df, target_folds=4)
+        >>> print(params)
+        {'train_years': 3, 'val_months': 3, 'step_months': 3}
     """
     start_date = full_df.index.min()
     end_date = full_df.index.max()
@@ -159,20 +256,45 @@ def get_walk_forward_splits(
     val_months: int,
     step_months: int
 ) -> Generator[Tuple[pd.DataFrame, pd.DataFrame], None, None]:
-    """Generates walk-forward training and validation splits from a DataFrame.
-
-    This implements a "Sliding Window with Static Start" approach using robust
-    integer-based slicing to prevent gaps or overlaps. Assumes a timezone-naive index.
-
-    Args:
-        full_df (pd.DataFrame): The entire historical DataFrame for an asset.
-        train_years (int): The initial number of years for the first training set.
-        val_months (int): The number of months for each validation set.
-        step_months (int): The number of months to expand the training set by in each step.
-
+    """
+    Generate walk-forward training and validation splits from a time series DataFrame.
+    
+    This function implements a "Sliding Window with Static Start" (expanding window) approach
+    for time series cross-validation. It creates multiple train/validation splits where:
+    1. The training window always starts at the beginning of the data
+    2. The training window expands over time to include more recent data
+    3. The validation window follows immediately after the training window
+    
+    Parameters:
+        full_df (pd.DataFrame): The entire historical DataFrame with a DatetimeIndex
+        train_years (int): Number of years for the initial training period
+        val_months (int): Number of months for each validation period
+        step_months (int): Number of months to advance the end of the training period in each step
+    
     Yields:
-        Generator[Tuple[pd.DataFrame, pd.DataFrame], None, None]: A generator that yields
-            tuples of (train_dataframe, validation_dataframe).
+        Generator[Tuple[pd.DataFrame, pd.DataFrame], None, None]: 
+            A generator providing (train_df, val_df) tuples for each fold
+    
+    Notes:
+        - Uses integer-based slicing for precise, non-overlapping splits
+        - Assumes a timezone-naive DatetimeIndex on the input DataFrame
+        - The training window grows with each fold, while the validation window slides forward
+        - This prevents look-ahead bias by always validating on future data
+    
+    Example:
+        >>> import pandas as pd
+        >>> # Create sample DataFrame with 3 years of daily data
+        >>> dates = pd.date_range('2020-01-01', '2022-12-31', freq='D')
+        >>> df = pd.DataFrame(index=dates, data={'value': range(len(dates))})
+        >>> 
+        >>> # Generate 3 folds with 1-year initial training, 3-month validation
+        >>> splits = get_walk_forward_splits(df, train_years=1, val_months=3, step_months=3)
+        >>> 
+        >>> # Process each fold
+        >>> for i, (train, val) in enumerate(splits):
+        ...     print(f"Fold {i+1}:")
+        ...     print(f"  Train: {train.index.min()} to {train.index.max()} ({len(train)} days)")
+        ...     print(f"  Val: {val.index.min()} to {val.index.max()} ({len(val)} days)")
     """
     start_date = full_df.index.min()
     end_date = full_df.index.max()
@@ -208,17 +330,59 @@ def prepare_darts_timeseries(
     target_col: str,
     feature_groups: Dict[str, List[str]]
 ) -> Tuple[TimeSeries, TimeSeries, TimeSeries, TimeSeries, ColumnTransformer]:
-    """Prepares normalized Darts TimeSeries objects for a single walk-forward fold.
-
-    Args:
-        train_df (pd.DataFrame): The training data for the current fold.
-        val_df (pd.DataFrame): The validation data for the current fold.
-        target_col (str): The name of the target variable column.
-        feature_groups (Dict[str, List[str]]): The feature group dictionary for the preprocessor.
-
+    """
+    Prepare normalized Darts TimeSeries objects for model training and validation.
+    
+    This function processes raw DataFrames into the specialized TimeSeries format
+    required by Darts models. It:
+    1. Separates target and feature columns
+    2. Creates and fits a feature transformer on training data only
+    3. Transforms both training and validation features consistently
+    4. Converts all processed data to Darts TimeSeries objects
+    
+    Parameters:
+        train_df (pd.DataFrame): Training data DataFrame with DatetimeIndex
+        val_df (pd.DataFrame): Validation data DataFrame with DatetimeIndex
+        target_col (str): Name of the target column to predict
+        feature_groups (Dict[str, List[str]]): Dictionary mapping feature group names
+            to lists of column names
+    
     Returns:
-        Tuple[TimeSeries, TimeSeries, TimeSeries, TimeSeries, ColumnTransformer]: A tuple containing
-            (target_train, target_val, covariates_train, covariates_val, fitted_scaler).
+        Tuple[TimeSeries, TimeSeries, TimeSeries, TimeSeries, ColumnTransformer]: 
+            A tuple containing:
+            - target_train: TimeSeries object with training target values
+            - target_val: TimeSeries object with validation target values
+            - covariates_train: TimeSeries object with normalized training features
+            - covariates_val: TimeSeries object with normalized validation features
+            - scaler: The fitted ColumnTransformer used for feature normalization
+    
+    Notes:
+        - The scaler is fitted ONLY on training data to prevent data leakage
+        - The same fitted scaler is applied to both training and validation features
+        - All TimeSeries objects are created with daily frequency
+    
+    Example:
+        >>> train_data = pd.DataFrame(
+        ...     index=pd.date_range('2021-01-01', '2021-12-31', freq='D'),
+        ...     data={'close': range(365), 'volume': range(10000, 10365), 'rsi': [50]*365}
+        ... )
+        >>> val_data = pd.DataFrame(
+        ...     index=pd.date_range('2022-01-01', '2022-01-31', freq='D'),
+        ...     data={'close': range(31), 'volume': range(20000, 20031), 'rsi': [60]*31}
+        ... )
+        >>> feature_groups = {
+        ...     'volume_features': ['volume'],
+        ...     'bounded_features': ['rsi']
+        ... }
+        >>> 
+        >>> target_train, target_val, cov_train, cov_val, scaler = prepare_darts_timeseries(
+        ...     train_data, val_data, 'close', feature_groups
+        ... )
+        >>> 
+        >>> print(f"Target train shape: {target_train.shape}")
+        >>> print(f"Target val shape: {target_val.shape}")
+        >>> print(f"Covariates train shape: {cov_train.shape}")
+        >>> print(f"Covariates val shape: {cov_val.shape}")
     """
     all_feature_cols = [col for group in feature_groups.values() for col in group]
 

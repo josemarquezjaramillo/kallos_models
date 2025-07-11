@@ -39,6 +39,7 @@ from darts.metrics import mae, mape, rmse
 from darts.models.forecasting.forecasting_model import ForecastingModel
 
 from . import datasets
+from .preprocessing import transform_features_to_dataframe
 
 # Set up a basic logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -235,8 +236,12 @@ def run_evaluation(
     target_series = TimeSeries.from_dataframe(eval_df[[target_col]], freq=eval_df.index.freq)
     
     features_df = eval_df[all_feature_cols]
-    features_norm = scaler.transform(features_df)
-    features_norm_df = pd.DataFrame(features_norm, index=features_df.index, columns=all_feature_cols)
+    
+    # Use the new function to handle transformation and DataFrame creation
+    features_norm_df = transform_features_to_dataframe(
+        scaler, features_df, feature_groups
+    )
+    
     covariates_series = TimeSeries.from_dataframe(features_norm_df, freq=eval_df.index.freq)
 
     # 4. Generate forecast

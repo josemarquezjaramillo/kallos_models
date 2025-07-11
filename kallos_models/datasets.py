@@ -45,7 +45,7 @@ from sklearn.compose import ColumnTransformer
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 
-from .preprocessing import create_feature_transformer
+from .preprocessing import create_feature_transformer, transform_features_to_dataframe
 
 # Set up a basic logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -394,11 +394,13 @@ def prepare_darts_timeseries(
     scaler = create_feature_transformer(feature_groups)
     scaler.fit(covariates_train_df)
 
-    covariates_train_norm = scaler.transform(covariates_train_df)
-    covariates_val_norm = scaler.transform(covariates_val_df)
-
-    covariates_train_norm_df = pd.DataFrame(covariates_train_norm, index=covariates_train_df.index, columns=all_feature_cols)
-    covariates_val_norm_df = pd.DataFrame(covariates_val_norm, index=covariates_val_df.index, columns=all_feature_cols)
+    # Use the new function to handle transformation and DataFrame creation
+    covariates_train_norm_df = transform_features_to_dataframe(
+        scaler, covariates_train_df, feature_groups
+    )
+    covariates_val_norm_df = transform_features_to_dataframe(
+        scaler, covariates_val_df, feature_groups
+    )
 
     target_train = TimeSeries.from_dataframe(target_train_df, freq='D')
     target_val = TimeSeries.from_dataframe(target_val_df, freq='D')

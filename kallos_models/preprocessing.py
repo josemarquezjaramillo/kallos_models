@@ -133,7 +133,7 @@ def create_feature_transformer(feature_groups: Dict[str, List[str]]) -> ColumnTr
         log_return_pipeline = Pipeline([
             ('handle_missing', FunctionTransformer(ffill_and_handle_missing)),
             ('scaler', StandardScaler()),
-            ('pca', PCA(n_components=0.95))  # Keep components explaining 95% variance
+            ('pca', PCA(n_components=2))  # Keep 2 components for dimension reduction
         ])
         transformer_pipelines.append(('log_return_features', log_return_pipeline, 
                                      feature_groups['log_return_features']))
@@ -179,3 +179,96 @@ def create_feature_transformer(feature_groups: Dict[str, List[str]]) -> ColumnTr
     )
 
     return preprocessor
+
+def transform_features_to_dataframe(
+    transformer: ColumnTransformer,
+    features_df: pd.DataFrame,
+    feature_groups: Dict[str, List[str]]
+) -> pd.DataFrame:
+    """
+    Transform features using the fitted transformer and convert the result to a DataFrame
+    with appropriate column names, preserving original names where possible.
+    
+    Assumes that PCA is only applied to 'log_return_features' and produces exactly 2 components.
+    
+    Parameters:
+        transformer (ColumnTransformer): A fitted scikit-learn ColumnTransformer
+        features_df (pd.DataFrame): DataFrame of features to transform
+        feature_groups (Dict[str, List[str]]): Dictionary mapping feature group names to lists of column names
+    
+    Returns:
+        pd.DataFrame: DataFrame with transformed features and appropriate column names
+    """
+    # Apply transformation
+    transformed_features = transformer.transform(features_df)
+    
+    # First, try to get feature names from transformer directly
+    try:
+        output_feature_names = transformer.get_feature_names_out()
+        return pd.DataFrame(
+            transformed_features,
+            index=features_df.index,
+            columns=output_feature_names
+        )
+    except (AttributeError, NotImplementedError) as e:
+        logging.debug(f"Could not get feature names from transformer: {e}")
+        
+        # Get original feature names
+        all_feature_cols = [col for group in feature_groups.values() for col in group]
+        
+        # If dimensions match, use original column names
+        if transformed_features.shape[1] == len(all_feature_cols):
+            return pd.DataFrame(
+                transformed_features,
+                index=features_df.index,
+                columns=all_feature_cols
+            )
+        else:
+            # Assume PCA is only applied to log_return_features and creates exactly 2 components
+            if 'log_return_features' in feature_groups:
+                # Count features before log_return_features
+                features_before_log_return = 0
+                for group_name, cols in feature_groups.items():
+                    if group_name == 'log_return_features':
+                        break
+                    features_before_log_return += len(cols)
+                
+                # Count features after log_return_features
+                log_return_original_count = len(feature_groups.get('log_return_features', []))
+                features_after_log_return = len(all_feature_cols) - features_before_log_return - log_return_original_count
+                
+                # Create column names with the original columns preserved and two PCA components for log_return_features
+                new_cols = []
+                
+                # Add columns before log_return_features
+                for group_name, cols in feature_groups.items():
+                    if group_name == 'log_return_features':
+                        break
+                    new_cols.extend(cols)
+                
+                # Add the two PCA components
+                new_cols.extend(['log_return_pc1', 'log_return_pc2'])
+                
+                # Add columns after log_return_features
+                for group_name, cols in list(feature_groups.items())[list(feature_groups.keys()).index('log_return_features') + 1:]:
+                    new_cols.extend(cols)
+                
+                logging.info(f"PCA reduced log_return_features from {log_return_original_count} to 2 components. "
+                            f"Total features: {len(new_cols)}")
+                
+                return pd.DataFrame(
+                    transformed_features,
+                    index=features_df.index,
+                    columns=new_cols
+                )
+            else:
+                # Default case - use generic names
+                new_cols = [f"feature_{i}" for i in range(transformed_features.shape[1])]
+                logging.info(f"Feature dimensions changed from {len(all_feature_cols)} to "
+                            f"{transformed_features.shape[1]}. Using generic column names.")
+                
+                return pd.DataFrame(
+                    transformed_features,
+                    index=features_df.index,
+                    columns=new_cols
+                )

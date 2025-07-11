@@ -44,6 +44,7 @@ from darts.models.forecasting.forecasting_model import ForecastingModel
 from sklearn.compose import ColumnTransformer
 
 from . import architectures, datasets
+from .preprocessing import transform_features_to_dataframe
 
 # Set up a basic logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -129,9 +130,10 @@ def train_and_save_model(
     logging.info("Fitting scaler on the entire dataset...")
     scaler.fit(features_df)
     
-    # 5. Transform features
-    features_norm = scaler.transform(features_df)
-    features_norm_df = pd.DataFrame(features_norm, index=features_df.index, columns=all_feature_cols)
+    # 5. Transform features using the new utility function
+    features_norm_df = transform_features_to_dataframe(
+        scaler, features_df, feature_groups
+    )
     
     # 6. Convert to Darts TimeSeries
     target_series = TimeSeries.from_dataframe(target_df, freq=full_df.index.freq)
@@ -144,6 +146,26 @@ def train_and_save_model(
     logging.info("Training final model on the full dataset...")
     model.fit(target_series, past_covariates=covariates_series, verbose=True)
     
+    # 9. Create output directory
+    os.makedirs(output_path, exist_ok=True)
+    
+    # 10. Define file paths
+    model_filename = f"{model_name}_{asset_id}.pt" # Darts saves PyTorch models with .pt
+    scaler_filename = f"{model_name}_{asset_id}_scaler.pkl"
+    model_filepath = os.path.join(output_path, model_filename)
+    scaler_filepath = os.path.join(output_path, scaler_filename)
+    
+    # 11. Save the Darts model
+    model.save(model_filepath)
+    
+    # 12. Save the fitted scaler
+    with open(scaler_filepath, 'wb') as f:
+        pickle.dump(scaler, f)
+        
+    logging.info(f"Model saved to: {model_filepath}")
+    logging.info(f"Scaler saved to: {scaler_filepath}")
+    
+    return model, scaler
     # 9. Create output directory
     os.makedirs(output_path, exist_ok=True)
     

@@ -150,7 +150,7 @@ def load_features_from_db(asset_id: str, end_date: str, db_kwargs: dict, start_d
                             DTI.TREND_QUALITY as trend_quality,
                             DTI.ROC_5 as roc_5,
                             -- Target variable calculation
-                            (LEAD(DM.PRICE, 30) OVER (PARTITION BY DM.ID ORDER BY DM.TIMESTAMP ASC) / DM.PRICE - 1) AS pct_return_30d
+                            (LEAD(DM.PRICE, 7) OVER (PARTITION BY DM.ID ORDER BY DM.TIMESTAMP ASC) / DM.PRICE - 1) AS pct_return_30d
                         FROM
                             DAILY_MARKET_DATA DM
                             LEFT JOIN DAILY_TECHNICAL_INDICATORS DTI USING (ID, TIMESTAMP)

@@ -14,7 +14,13 @@ Example:
     trainer.train_and_save_model(
         asset_id="BTC",
         end_date="2023-01-01",
-        db_url="postgresql://user:pass@localhost:5432/crypto_db",
+        db_kwargs={
+            "postgres_user": "user",
+            "postgres_password": "pass",
+            "postgres_host": "localhost",
+            "postgres_port": 5432,
+            "postgres_db": "crypto_db"
+        },
         model_name="gru",
         target_col="close",
         feature_groups={
@@ -36,7 +42,7 @@ Example:
 import logging
 import os
 import pickle
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 
 import pandas as pd
 from darts import TimeSeries
@@ -45,15 +51,17 @@ from sklearn.compose import ColumnTransformer
 
 from . import architectures, datasets
 from .preprocessing import transform_features_to_dataframe
+from .training_config import get_production_trainer_config
 
 # Set up a basic logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 def train_and_save_model(
+    study_name: str,
     asset_id: str,
     end_date: str,
-    db_url: str,
+    db_kwargs: Dict[str, Union[int, str]],
     model_name: str,
     target_col: str,
     feature_groups: Dict[str, List[str]],
@@ -74,7 +82,12 @@ def train_and_save_model(
     Parameters:
         asset_id (str): The asset identifier (e.g., "BTC", "ETH")
         end_date (str): The end date for the data in ISO format (YYYY-MM-DD)
-        db_url (str): The SQLAlchemy database URL for data loading
+        db_kwargs (Dict[str, Union[int, str]]): Database connection parameters containing:
+            - postgres_user (str): Database username
+            - postgres_password (str): Database password
+            - postgres_host (str): Database host address
+            - postgres_port (int): Database port number
+            - postgres_db (str): Database name
         model_name (str): The type of model to create (e.g., "gru", "lstm", "transformer")
         target_col (str): The name of the target column in the dataset
         feature_groups (Dict[str, List[str]]): Dictionary mapping feature group names to lists of column names
@@ -97,7 +110,13 @@ def train_and_save_model(
         model, scaler = train_and_save_model(
             asset_id="BTC",
             end_date="2023-01-01",
-            db_url="postgresql://user:pass@localhost:5432/crypto_db",
+            db_kwargs={
+                "postgres_user": "user", 
+                "postgres_password": "pass",
+                "postgres_host": "localhost", 
+                "postgres_port": 5432,
+                "postgres_db": "crypto_db"
+            },
             model_name="gru",
             target_col="close",
             feature_groups={
@@ -118,7 +137,7 @@ def train_and_save_model(
     logging.info(f"Starting final training for {model_name} on asset {asset_id}.")
     
     # 1. Load data
-    full_df = datasets.load_features_from_db(asset_id, end_date, db_url)
+    full_df = datasets.load_features_from_db(asset_id, end_date, db_kwargs)
     
     # 2. Separate target and features
     all_feature_cols = [col for group in feature_groups.values() for col in group]
@@ -130,17 +149,24 @@ def train_and_save_model(
     logging.info("Fitting scaler on the entire dataset...")
     scaler.fit(features_df)
     
-    # 5. Transform features using the new utility function
+    # 4. Transform features using the utility function
     features_norm_df = transform_features_to_dataframe(
         scaler, features_df, feature_groups
     )
     
-    # 6. Convert to Darts TimeSeries
+    # 5. Convert to Darts TimeSeries
     target_series = TimeSeries.from_dataframe(target_df, freq=full_df.index.freq)
     covariates_series = TimeSeries.from_dataframe(features_norm_df, freq=full_df.index.freq)
     
-    # 7. Instantiate model with optimal hyperparameters
-    model = architectures.create_model(model_name, **optimal_hparams)
+    # 6. Get standardized training configuration
+    pl_trainer_kwargs = get_production_trainer_config()
+    
+    # 7. Instantiate model with optimal hyperparameters and trainer kwargs
+    model = architectures.create_model(
+        model_name, 
+        hparams=optimal_hparams,
+        pl_trainer_kwargs=pl_trainer_kwargs
+    )
     
     # 8. Train the model on the full TimeSeries
     logging.info("Training final model on the full dataset...")
@@ -150,39 +176,19 @@ def train_and_save_model(
     os.makedirs(output_path, exist_ok=True)
     
     # 10. Define file paths
-    model_filename = f"{model_name}_{asset_id}.pt" # Darts saves PyTorch models with .pt
-    scaler_filename = f"{model_name}_{asset_id}_scaler.pkl"
+    model_filename = f"{study_name}.pt" # Darts saves PyTorch models with .pt
+    scaler_filename = f"{study_name}_scaler.pkl"
     model_filepath = os.path.join(output_path, model_filename)
     scaler_filepath = os.path.join(output_path, scaler_filename)
     
-    # 11. Save the Darts model
+    # 11. Save the model using Darts' native save method
     model.save(model_filepath)
+    logging.info(f"Model saved to: {model_filepath}")
     
     # 12. Save the fitted scaler
     with open(scaler_filepath, 'wb') as f:
         pickle.dump(scaler, f)
         
-    logging.info(f"Model saved to: {model_filepath}")
-    logging.info(f"Scaler saved to: {scaler_filepath}")
-    
-    return model, scaler
-    # 9. Create output directory
-    os.makedirs(output_path, exist_ok=True)
-    
-    # 10. Define file paths
-    model_filename = f"{model_name}_{asset_id}.pt" # Darts saves PyTorch models with .pt
-    scaler_filename = f"{model_name}_{asset_id}_scaler.pkl"
-    model_filepath = os.path.join(output_path, model_filename)
-    scaler_filepath = os.path.join(output_path, scaler_filename)
-    
-    # 11. Save the Darts model
-    model.save(model_filepath)
-    
-    # 12. Save the fitted scaler
-    with open(scaler_filepath, 'wb') as f:
-        pickle.dump(scaler, f)
-        
-    logging.info(f"Model saved to: {model_filepath}")
     logging.info(f"Scaler saved to: {scaler_filepath}")
     
     return model, scaler

@@ -40,12 +40,10 @@ from typing import Dict, List, Union
 
 import numpy as np
 import optuna
-from darts.metrics import rmse
-from sqlalchemy.engine import URL
-from pytorch_lightning.callbacks import EarlyStopping
 
 from . import architectures, datasets
-
+from .training_config import get_tuning_trainer_config
+from .evaluation import rmse, calculate_directional_accuracy
 
 # Set up a basic logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -105,21 +103,12 @@ def objective(
         ), n_trials=100)
     """
     
-    # Define the PyTorch Lightning Trainer arguments, including EarlyStopping
-    early_stopper = EarlyStopping(
-        monitor="val_loss",   # The metric to monitor
-        patience=50,          # Number of epochs to wait for improvement
-        min_delta=0.0005,     # Minimum change to qualify as an improvement
-        mode='min'            # Stop when the monitored metric stops decreasing
-    )
-    
-    pl_trainer_kwargs = {
-        "max_epochs": 500,
-        "callbacks": [early_stopper]
-    }
+    # Get standardized training configuration for tuning
+    pl_trainer_kwargs = get_tuning_trainer_config()
    
     # 1. Define hyperparameters for the model's structure and data loading
     hparams = {
+        'lambda': trial.suggest_int('lambda', 1, 5, log=True),
         'hidden_dim': trial.suggest_int('hidden_dim', 32, 256, log=True),
         'n_rnn_layers': trial.suggest_int('n_rnn_layers', 1, 4),
         'dropout': trial.suggest_float('dropout', 0.0, 0.7),
@@ -129,7 +118,7 @@ def objective(
     
     # 2. Define the learning rate for the optimizer separately
     learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
-    
+
     # 3. Add the learning rate to the optimizer_kwargs dictionary within hparams
     # This is the correct way to pass it to the Darts model.
     hparams['optimizer_kwargs'] = {'lr': learning_rate}
@@ -143,7 +132,8 @@ def objective(
                                                         train_years=wf_kwargs["train_years"],
                                                         val_months=wf_kwargs["val_months"],
                                                         step_months=wf_kwargs["step_months"])
-    validation_scores = []
+    rmse_scores = []
+    directional_accuracy_scores = []
     for i, (train_df, val_df) in enumerate(splits_generator):
         logging.info(f"Trial {trial.number}, Fold {i+1}: Training on {len(train_df)} samples, validating on {len(val_df)}.")
         target_train, target_val, cov_train, cov_val, _ = datasets.prepare_darts_timeseries(
@@ -167,13 +157,16 @@ def objective(
         prediction_covariates = cov_train.append(cov_val)
         preds = model.predict(n=len(target_val), past_covariates=prediction_covariates)
 
-        # Calculate RMSE for the current fold       
-        score = rmse(target_val, preds)
-        validation_scores.append(score)
+        # Calculate RMSE for the current fold
+        rmse_ = rmse(target_val, preds)
+        directional_accuracy = calculate_directional_accuracy(target_val, preds)
+        rmse_scores.append(rmse_)
+        directional_accuracy_scores.append(directional_accuracy)
 
-    mean_score = float(np.mean(validation_scores))
-    logging.info(f"Trial {trial.number} finished. Avg RMSE: {mean_score:.4f}, Params: {trial.params}")
-    return mean_score
+    mean_rmse = float(np.mean(rmse_scores))
+    mean_directional_accuracy = float(np.mean(directional_accuracy_scores))
+    logging.info(f"Trial {trial.number} finished. Avg RMSE: {mean_rmse:.4f}, Avg. DA: {mean_directional_accuracy:.1f}, Params: {trial.params}")
+    return mean_rmse, mean_directional_accuracy
 
 
 def run_tuning(
@@ -255,7 +248,8 @@ def run_tuning(
         url=storage_url
     )
 
-    study = optuna.create_study(direction='minimize',
+    study = optuna.create_study(directions=['minimize','maximize'],
+                                sampler=optuna.samplers.NSGAIISampler(seed=42),
                                 storage=storage,
                                 study_name=study_name,
                                 load_if_exists=True)
@@ -272,7 +266,6 @@ def run_tuning(
 
     study.optimize(objective_fn, n_trials=n_trials-current_study_trials)
 
-    logging.info(f"Tuning finished. Best trial value: {study.best_value:.4f}")
-    logging.info(f"Best params: {study.best_params}")
+    logging.info(f"Tuning finished.")
 
     return study

@@ -31,10 +31,12 @@ Example:
 """
 
 import logging
-from typing import Dict, Union
+from typing import Dict
 
 from darts.models import BlockRNNModel, TransformerModel
 from darts.models.forecasting.forecasting_model import ForecastingModel
+
+from .loss import DirectionSelectiveMSELoss
 
 # Set up a basic logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -130,19 +132,22 @@ def create_model(
         ...     pl_trainer_kwargs={"max_epochs": 100, "callbacks": [early_stopper]}
         ... )
     """
+    logging.info(f"Creating model: {model_name} with params: {hparams}")
+    direction_penalty = hparams.pop('lambda', 2)  # Optional parameter for some models
     model_kwargs = {
         'output_chunk_length': 1,  # Default output chunk length
         'random_state': 42,
         'pl_trainer_kwargs': pl_trainer_kwargs,
         **hparams
     }
-
+    # Normalize model name to lowercase for consistent handling
     model_name_lower = model_name.lower()
-    logging.info(f"Creating model: {model_name_lower} with params: {model_kwargs}")
+    
+    
 
     if model_name_lower in ['gru', 'lstm']:
         # For RNN models, we use the generic RNNModel class and specify the model type.
-        model = BlockRNNModel(model=model_name.upper(), **model_kwargs)
+        model = BlockRNNModel(model=model_name.upper(), loss_fn=DirectionSelectiveMSELoss(direction_penalty), **model_kwargs)
     elif model_name_lower == 'transformer':
         # TransformerModel has different arg names, so we adjust
         transformer_kwargs = model_kwargs.copy()
@@ -157,4 +162,30 @@ def create_model(
     else:
         raise ValueError(f"Unsupported model name: '{model_name}'. Supported: 'lstm', 'gru', 'transformer'.")
 
+    return model
+
+
+def load_model_with_custom_loss(model_path: str) -> ForecastingModel:
+    """
+    Load a model from disk using the correct model class loader and
+    ensure it has the DirectionSelectiveMSELoss as its loss function.
+    
+    Parameters:
+        model_path (str): Path to the saved model file
+        
+    Returns:
+        ForecastingModel: The loaded model with the appropriate loss function
+    """
+    # Use the specific model class loader based on filename
+    if 'gru' in model_path.lower() or 'lstm' in model_path.lower():
+        model = BlockRNNModel.load(model_path)
+    else:
+        # Fallback to generic loader for other model types
+        model = ForecastingModel.load(model_path)
+    
+    # Ensure custom loss function is set
+    if hasattr(model, 'loss_fn'):
+        model.loss_fn = DirectionSelectiveMSELoss()
+        logging.info(f"Restored DirectionSelectiveMSELoss to model")
+    
     return model
